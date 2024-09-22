@@ -1,13 +1,22 @@
 package io.flowable.basic;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Scanner;
 
+import org.flowable.engine.HistoryService;
 import org.flowable.engine.ProcessEngine;
 import org.flowable.engine.ProcessEngineConfiguration;
 import org.flowable.engine.RepositoryService;
+import org.flowable.engine.RuntimeService;
+import org.flowable.engine.TaskService;
+import org.flowable.engine.history.HistoricActivityInstance;
 import org.flowable.engine.impl.cfg.StandaloneProcessEngineConfiguration;
 import org.flowable.engine.repository.Deployment;
 import org.flowable.engine.repository.ProcessDefinition;
+import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.task.api.Task;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,6 +47,7 @@ public class HolidayRequest {
                 .singleResult();
         log.info("Found process definition: {}", processDefinition.getName());
 
+        // 2.3.3. 启动流程实例
         Scanner scanner= new Scanner(System.in);
 
         System.out.println("Who are you?");
@@ -48,5 +58,50 @@ public class HolidayRequest {
 
         System.out.println("Why do you need them?");
         String description = scanner.nextLine();
+
+        RuntimeService runtimeService = processEngine.getRuntimeService();
+
+        Map<String, Object> variables = new HashMap<>();
+        variables.put("employee", employee);
+        variables.put("nrOfHolidays", nrOfHolidays);
+        variables.put("description", description);
+        ProcessInstance processInstance = runtimeService.startProcessInstanceByKey("holidayRequest", variables);
+
+        // 2.3.5. 查询与完成任务
+        TaskService taskService = processEngine.getTaskService();
+        List<Task> tasks = taskService.createTaskQuery()
+                .taskCandidateGroup("managers")
+                .list();
+        System.out.println("You have " + tasks.size() + " tasks:");
+        for (int i = 0; i < tasks.size(); i++) {
+            System.out.println((i + 1) + ") " + tasks.get(i).getName());
+        }
+
+        System.out.println("Which task would you like to complete?");
+        int taskIndex = Integer.valueOf(scanner.nextLine());
+        Task task = tasks.get(taskIndex - 1);
+        Map<String, Object> processVariables = taskService.getVariables(task.getId());
+        System.out.println(processVariables.get("employee") + " wants " +
+                processVariables.get("nrOfHolidays") + " of holidays. Do you approve this?");
+
+        boolean approved = scanner.nextLine()
+                .toLowerCase()
+                .equals("y");
+        variables = new HashMap<>();
+        variables.put("approved", approved);
+        taskService.complete(task.getId(), variables);
+
+        // 2.3.7. 使用历史数据
+        HistoryService historyService = processEngine.getHistoryService();
+        List<HistoricActivityInstance> activities = historyService.createHistoricActivityInstanceQuery()
+                .processInstanceId(processInstance.getId())
+                .finished()
+                .orderByHistoricActivityInstanceEndTime()
+                .asc()
+                .list();
+
+        for (HistoricActivityInstance activity : activities) {
+            log.info("activity: {} took {} milliseconds", activity.getActivityId(), activity.getDurationInMillis());
+        }
     }
 }
